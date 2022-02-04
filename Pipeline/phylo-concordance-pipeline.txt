@@ -1,0 +1,79 @@
+#######################################
+## PHYLOGENETIC CONCORDANCE PIPELINE ##
+#######################################
+
+- Start with separate fasta files containing amino acid sequences for each bacteria genome within genus (or representing a genus)
+
+- Concatenate all fasta files
+	cat *.faa > all.faa
+
+- Build BLAST db using all amino acid sequences
+	makeblastdb -in all.faa -dbtype prot
+
+- Perform an all vs all BLASTp
+	blastp -db all.faa -query all.faa -evalue 1e-5 -out all.faa_blastall -outfmt 6
+
+- Perform homologous gene clustering using the MCL algorithm implemented in mclblastline
+	mclblastline --mcl-I=1.8 --blast-m9 all.faa_blastall
+
+- Identify all single copy core gene clusters (SCCGCs). More specifically, identify all homologous gene clusters that contain [i] core genes (genes present in all genomes) and [ii] are present as just a single copy (exclude paralogs)
+
+- Delineate all gene sequence locus_tags for each SCCGC
+
+- Use SCCGC locus_tags to build multi-fasta files containing nucleotide sequences for each SCCGC
+
+- Perform global nucleotide sequence alignment for each SCCGC multi-fasta file using Probalign 
+	- Translate nucleotide sequence to amino acid using BioPerl (codon table 11)
+	- Run Probalign
+		probalign -prot -showPP in > out
+	- Back translate alignments to nucleotide sequence
+	- Mask alignment sites with posterior probability scores of less than 7
+	
+- Evaluate each SCCGC alignment for recombination using the Pairwise Homoplasy Index as implemented in PhiPack	
+	Phi alignment.fnn
+	
+- Evaluate each SCCGC alignment for recombination using the Single Breakpoint approach as implemented in HyPhy
+	Model: GRM (General Reversible Model that allows for substitution rate heterogeneity)
+	Model option: Local (allows different nucleotide substitution process parameters for each branch in the phylogeny)
+	
+- Evaluate single copy core genes within each genome for horizontal gene transfer using HGTector
+	SPECIES
+	selfTax=strain-level
+	selfGroup=species-level
+	closeGroup=genus-level
+	searchTool=BLAST
+	protdb=nr
+	
+	GENUS
+	selfTax=species-level
+	selfGroup=genus-level
+	closeGroup=order-level
+	searchTool=BLAST
+	protdb=nr
+	
+CONCATENATED SPECIES PHYLOGENY (same procedure for species representing different genera - inter-genus analysis)
+- Concatenate all SCCGC alignments that did not test positive for recombination or HGT
+
+- Using the concatenated alignment, build a "species" phylogeny. Use the maximum likelihood approach implemented in PhyML v3.0 (GTR+I+G). 500 bootstrap replicates. Phylogeny is un-rooted.
+	mpirun -np 30 phyml-mpi -i alignment.phy -s BEST -m GTR -f e -a e -v e -b 500
+
+GENE PHYLOGENY CONSENSUS PHYLOGENY
+- For each of the SCCGC alignments that did not test positive for recombination or HGT, build a "gene" phylogeny using the maximum likelihood approach implemented in PhyML v3.0 (GTR+I+G). Phylogeny is un-rooted.
+	mpirun -np 30 phyml-mpi -i alignment.phy -s BEST -m GTR -f e -a e -v e 
+
+- Use the SCCGC gene phylogenies to build a gene phylogeny consensus phylogeny using the majority rule (extended) approach implemented in consense (phylip)
+	phylip consense <default settings>
+
+PHYLOGENETIC CONCORDANCE between gene and species phylogenies
+- Use sumtrees.py (as implemented in DendroPy) to determine the proportion of concordant nodes between the each gene phylogeny and the species phylogeny
+	sumtrees.py -o out.newick -t species_tree.newick --output-tree-format newick -f0.0 -p -d 0 --suppress-annotations gene_tree.newick species_tree.newick 
+
+PHYLOGENY TOPOLOGY TEST
+- compare gene phylogeny topologies to the species phylogeny topology using the approximately unbiassed (AU) approach (as implemented in IQ-TREE) to determine which (if any) topologies do not show a significant difference.
+	iqtree -s concatenated_aln.fasta -te species_tree.newick -z concatenated_gene_trees.newick -n 0 -zb 10000 -zw -au 
+
+
+
+
+
+
